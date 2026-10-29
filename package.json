@@ -1,0 +1,24 @@
+{
+  "name": "saascribe-cli",
+  "description": "scb: the Saascribe CLI",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SaaScribeHq/cli.git"
+  },
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "scb": "./index.ts"
+  },
+  "scripts": {
+    "dev": "bun index.ts",
+    "build": "bun build --compile index.ts --outfile dist/scb"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
