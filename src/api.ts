@@ -18,6 +18,17 @@ export type Transaction = {
   createdAt: string;
 };
 
+// Fields a checkout shows: inputs the customer fills in, or text (textView).
+export type PaymentField = {
+  name: string;
+  label: string;
+  placeholder?: string;
+  type: "input" | "textView";
+  readonly?: boolean;
+  format?: "phonenumber" | "email" | "text";
+  value?: string;
+};
+
 export type TransactionDetail = Omit<Transaction, "customer"> & {
   updatedAt: string;
   details: {
@@ -28,6 +39,7 @@ export type TransactionDetail = Omit<Transaction, "customer"> & {
     expiresAt: string | null;
     error: string | null;
   };
+  customFields: PaymentField[]; // the intent's custom fields with the customer's answers
   customer: { id: string; name: string | null; email: string | null; phoneNumber: string | null } | null;
   paymentIntent: { id: string; title: string; description: string | null; amount: string; checkoutUrl: string } | null;
 };
@@ -43,7 +55,16 @@ export type Customer = {
   createdAt: string;
 };
 
-export type PaymentIntent = { id: string; amount: string; title: string; description: string | null; createdAt: string };
+export type PaymentIntent = {
+  id: string;
+  amount: string;
+  title: string;
+  description: string | null;
+  customer: { id: string; name: string | null; email: string | null } | null;
+  paymentMethods: ("GPO" | "REF")[] | null; // null: every method
+  customFields: PaymentField[];
+  createdAt: string;
+};
 
 export class ApiError extends Error {
   constructor(

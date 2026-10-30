@@ -1,4 +1,12 @@
-import { type Customer, type Page, type PaymentIntent, request, type Transaction, type TransactionDetail } from "./api";
+import {
+  type Customer,
+  type Page,
+  type PaymentField,
+  type PaymentIntent,
+  request,
+  type Transaction,
+  type TransactionDetail,
+} from "./api";
 import { withToken } from "./auth";
 import { deleteToken, TOKEN_PATH } from "./config";
 import {
@@ -102,6 +110,10 @@ export async function showTransaction(id: string) {
     ["Email", orDash(t.customer?.email)],
     ["Phone", orDash(t.customer?.phoneNumber)],
   ]);
+  if (t.customFields.length > 0) {
+    console.log(`\n${c.bold("Custom fields")}`);
+    fields(t.customFields.map((f) => [f.label, orDash(f.value)]));
+  }
   if (t.paymentIntent) {
     console.log(`\n${c.bold("Payment intent")}`);
     fields([
@@ -141,6 +153,93 @@ const isUrl = (value: string) => {
   }
 };
 
+const METHOD_IDS = Object.keys(METHODS) as (keyof typeof METHODS)[];
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const FIELD_KEY = /^[A-Za-z][A-Za-z0-9_]{0,49}$/;
+const MAX_CUSTOM_FIELDS = 5;
+
+// Which methods the checkout offers. Empty answer: all of them (null).
+async function askPaymentMethods() {
+  const options = METHOD_IDS.map((id) => `${id} (${METHODS[id]})`).join(", ");
+  const answer = await ask(`Payment methods: ${options}, comma-separated. Enter for all`, {
+    optional: true,
+    validate: (v) => {
+      const ids = v.split(",").map((m) => m.trim().toUpperCase()).filter(Boolean);
+      const unknown = ids.find((id) => !(METHOD_IDS as string[]).includes(id));
+      return unknown ? `Unknown method ${unknown}. Use ${METHOD_IDS.join(" or ")}.` : null;
+    },
+  });
+  if (!answer) return null;
+  return [...new Set(answer.split(",").map((m) => m.trim().toUpperCase()).filter(Boolean))] as (keyof typeof METHODS)[];
+}
+
+// Who pays, if known: an existing customer's ID, or an email (and name) to find or create one.
+async function askCustomer(): Promise<
+  { customerId: string } | { customer: { email: string; name?: string } } | null
+> {
+  const answer = await ask("Customer: their email, or an existing customer ID. Enter to ask on the checkout", {
+    optional: true,
+    validate: (v) => (v.includes("@") && !EMAIL.test(v) ? "Enter a valid email." : null),
+  });
+  if (!answer) return null;
+  if (!answer.includes("@")) return { customerId: answer };
+  const name = await ask("Customer's full name", {
+    optional: true,
+    validate: (v) => (v.length > 100 ? "Keep it under 100 characters." : null),
+  });
+  return { customer: { email: answer, name: name || undefined } };
+}
+
+// "Delivery note" -> "delivery_note": a valid field key from its label.
+const keyFromLabel = (label: string) =>
+  label
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^[^A-Za-z]+|_+$/g, "")
+    .slice(0, 50) || "field";
+
+// Up to 5 extra checkout fields: inputs the customer fills in, or text shown to them.
+async function askCustomFields() {
+  const result: PaymentField[] = [];
+  while (result.length < MAX_CUSTOM_FIELDS) {
+    const question = result.length === 0 ? "Add a custom field to the checkout?" : "Add another custom field?";
+    if (!(await confirm(question, { defaultYes: false }))) break;
+
+    const label = await ask("  Label, shown to the customer", {
+      validate: (v) => (v.length > 100 ? "Keep it under 100 characters." : null),
+    });
+    const suggested = keyFromLabel(label);
+    const name =
+      (await ask(`  Key for the answer ${c.dim(`(Enter for ${suggested})`)}`, {
+        optional: true,
+        validate: (v) =>
+          !FIELD_KEY.test(v)
+            ? "Use letters, digits and _, starting with a letter."
+            : result.some((f) => f.name === v)
+              ? "Another field already uses this key."
+              : null,
+      })) || suggested;
+    if (result.some((f) => f.name === name)) {
+      console.log(`  ${c.red(`Another field already uses the key ${name}. Try again with a different label or key.`)}`);
+      continue;
+    }
+
+    const isText = !(await confirm("  Does the customer fill it in? (No: it's text shown to them)"));
+    if (isText) {
+      const value = await ask("  Text to show", {
+        validate: (v) => (v.length > 500 ? "Keep it under 500 characters." : null),
+      });
+      result.push({ name, label, type: "textView", value });
+    } else {
+      const placeholder = await ask("  Placeholder", { optional: true });
+      result.push({ name, label, type: "input", placeholder: placeholder || undefined });
+    }
+  }
+  if (result.length === MAX_CUSTOM_FIELDS) console.log(c.dim(`  That's the maximum of ${MAX_CUSTOM_FIELDS} custom fields.`));
+  return result;
+}
+
 // Interactive guide: asks for each field, shows a summary, then creates the intent.
 export async function createIntent() {
   await withToken(async (token) => {
@@ -167,6 +266,9 @@ export async function createIntent() {
     const urlCheck = (v: string) => (isUrl(v) ? null : "Enter a full URL, starting with https://");
     const successUrl = await ask("Success URL, where the customer goes after paying", { optional: true, validate: urlCheck });
     const cancelUrl = await ask("Cancel URL, where the customer goes if they cancel", { optional: true, validate: urlCheck });
+    const paymentMethods = await askPaymentMethods();
+    const customer = await askCustomer();
+    const customFields = await askCustomFields();
 
     console.log(`\n${c.bold("Summary")}`);
     fields([
@@ -175,6 +277,16 @@ export async function createIntent() {
       ["Description", orDash(description)],
       ["Success URL", successUrl || c.dim("your account's website")],
       ["Cancel URL", cancelUrl || c.dim("your account's website")],
+      ["Methods", paymentMethods ? paymentMethods.map((m) => METHODS[m]).join(", ") : c.dim("all")],
+      [
+        "Customer",
+        !customer
+          ? c.dim("asked on the checkout")
+          : "customerId" in customer
+            ? customer.customerId
+            : [customer.customer.name, customer.customer.email].filter(Boolean).join(" · "),
+      ],
+      ["Custom fields", customFields.length ? customFields.map((f) => f.label).join(", ") : c.dim("none")],
     ]);
     console.log();
     if (!(await confirm("Create this payment intent?"))) {
@@ -192,6 +304,9 @@ export async function createIntent() {
         description: description || undefined,
         successUrl: successUrl || undefined,
         cancelUrl: cancelUrl || undefined,
+        paymentMethods,
+        ...customer,
+        customFields: customFields.length ? customFields : undefined,
       },
     );
 
@@ -200,6 +315,7 @@ export async function createIntent() {
     fields([
       ["ID", paymentIntent.id],
       ["Amount", money(paymentIntent.amount)],
+      ...(paymentIntent.customer ? ([["Customer ID", paymentIntent.customer.id]] as [string, string][]) : []),
       ["Checkout", c.blue(checkoutUrl)],
     ]);
     console.log(c.dim("\nSend the checkout link to your customer. Track it with: scb transactions"));

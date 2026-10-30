@@ -94,9 +94,10 @@ export async function ask(
   }
 }
 
-export async function confirm(question: string) {
-  const answer = await readLine(`${c.cyan("?")} ${question} ${c.dim("(Y/n)")}`);
-  return !/^n/i.test(answer.trim());
+// Yes/no; an empty answer takes the default.
+export async function confirm(question: string, { defaultYes = true } = {}) {
+  const answer = (await readLine(`${c.cyan("?")} ${question} ${c.dim(defaultYes ? "(Y/n)" : "(y/N)")}`)).trim();
+  return answer ? /^y/i.test(answer) : defaultYes;
 }
 
 // Reads a secret without echoing it (shows * per character).

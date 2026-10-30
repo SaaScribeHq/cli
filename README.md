@@ -40,7 +40,7 @@ scb transactions --status PENDING    # filter: APPROVED, PENDING, FAILED, REVERS
 scb transactions --search "order"    # search description or customer
 scb transactions <id>                # transaction details
 scb customers                        # list customers (--search, --page, --limit)
-scb create intent                    # step-by-step: create a payment intent, get its checkout link
+scb create intent                    # step-by-step: amount, methods, customer, custom fields -> checkout link
 scb logout                           # remove the saved API key
 scb help
 ```
